@@ -40,6 +40,16 @@ class Calculator:
         ity = ixt + second_chechik_term
         return ity
 
+    # TODO ixt & chechik_term are those who need the beta update for batches
+
+    def ixt(self, beta):
+        k_beta = self.beta_placer(beta)
+        lambda_max = 1. - torch.pow(k_beta + 1, -1)
+        multipliers = self.multipliers(k_beta, lambda_max)
+        terms = self.gammas * multipliers
+        ixt = torch.sum(terms)
+        return ixt
+
     def chechik_term(self, beta, ixt):
         k_beta = self.beta_placer(beta)
         masker = torch.tensor([1 for k in range(k_beta)]
@@ -61,25 +71,23 @@ class Calculator:
         log_term = -n_I / 2 * torch.log(inner_log_term)
         return log_term
 
-    def ixt(self, beta):
-        k_beta = self.beta_placer(beta)
-        lambda_max = 1 - 1 / (k_beta + 1)
-        multipliers = torch.tensor([self.k_multiplier_ixt(k, lambda_max) for k in range(1, k_beta + 1)]
-                                   + [0.] * (self.dim - k_beta)).to('cuda')
-        terms = self.gammas * multipliers
-        ixt = torch.sum(terms)
-        return ixt
-
     def k_multiplier_ixt(self, k, lambda_max):
         lambda_k = torch.tensor(1 - 1 / (k + 1)).to('cuda')
         log_term = torch.log((lambda_max * (1 - lambda_k)) / (lambda_k * (1 - lambda_max)))
         return log_term
 
     def beta_placer(self, beta):
-        lambda_ = 1 - beta ** -1
-        k_frac = 1 / (1 - lambda_) - 1
-        k = math.floor(k_frac)
+        lambda_ = 1 - torch.pow(beta, -1)
+        k_frac = torch.pow(1 - lambda_, -1) - 1
+        k = torch.floor(k_frac).int()
         return k
+
+    def multipliers(self, k_beta, lambda_max):
+
+
+
+        [self.k_multiplier_ixt(k, lambda_max) for k in range(1, k_beta + 1)]
+        + [0., ] * (self.dim - k_beta)
 
 
 class Trainer(Calculator):
@@ -110,10 +118,7 @@ class Trainer(Calculator):
         self.train_mode()
         for i in tqdm(range(10_000)):
             beta = self.beta_randomizer(batch_size=10)
-            loss_ten = \
-                (self.losser(beta[0]) + self.losser(beta[1]) + self.losser(beta[2]) + self.losser(beta[3])
-                 + self.losser(beta[4]) + self.losser(beta[5]) + self.losser(beta[6]) + self.losser(beta[7])
-                 + self.losser(beta[8]) + self.losser(beta[9])) / 10
+            loss_ten = self.losser(beta)
             loss = loss_ten
             loss.backward()
             self.optim.step()
@@ -122,8 +127,9 @@ class Trainer(Calculator):
             self.note_me(i, loss)
 
     def beta_randomizer(self, batch_size=1):
-        beta_1 = [(self.dim - 1) * random.random() + 1 for _ in range(batch_size)]
-        return beta_1
+        beta_1 = torch.tensor([(self.dim - 1) * random.random() + 1 for _ in range(batch_size)], device='cuda')
+        beta_2 = beta_1.unsqueeze(-1)
+        return beta_2
 
     def rhs(self, beta):
         rhs = 1 - self.iy(beta)
@@ -132,14 +138,14 @@ class Trainer(Calculator):
     def lhs(self, beta):
         lhs_1 = 1 - self.ix(beta)
         if lhs_1 < 0:
-            lhs_1 = torch.abs(lhs_1) * 1_000.
+            lhs_1 = torch.square(lhs_1) * 50.
         lhs = self.c * torch.pow(lhs_1, self.alpha)
         return lhs
 
     def losser(self, beta):
         rhs = self.rhs(beta)
         lhs = self.lhs(beta)
-        diff = torch.square(lhs - rhs)
+        diff = torch.square(lhs - rhs).mean()
         return diff
 
     def note_me(self, i, loss):
