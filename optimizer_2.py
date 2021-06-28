@@ -44,16 +44,16 @@ class Calculator:
 
     def ixt(self, beta):
         k_beta = self.beta_placer(beta)
-        lambda_max = 1. - torch.pow(k_beta + 1, -1)
+        lambda_max = 1. - torch.pow(k_beta.float() + 1, -1)
         multipliers = self.multipliers(k_beta, lambda_max)
         terms = self.gammas * multipliers
         ixt = torch.sum(terms)
         return ixt
 
     def chechik_term(self, beta, ixt):
-        k_beta = self.beta_placer(beta)
-        masker = torch.tensor([1 for k in range(k_beta)]
-                              + [0.] * (self.dim - k_beta)).to('cuda')
+        k_betas = self.beta_placer(beta).squeeze().tolist()
+        masker = torch.tensor([[1 for k in range(k_beta)]
+                              + [0.] * (self.dim - k_beta) for k_beta in k_betas]).to('cuda')
         masked_lambdas = self.lambdas * masker
         masked_gammas_un_normalized = self.gammas * masker
         n_I = torch.sum(masked_gammas_un_normalized)
@@ -71,23 +71,24 @@ class Calculator:
         log_term = -n_I / 2 * torch.log(inner_log_term)
         return log_term
 
-    def k_multiplier_ixt(self, k, lambda_max):
-        lambda_k = torch.tensor(1 - 1 / (k + 1)).to('cuda')
-        log_term = torch.log((lambda_max * (1 - lambda_k)) / (lambda_k * (1 - lambda_max)))
-        return log_term
-
     def beta_placer(self, beta):
         lambda_ = 1 - torch.pow(beta, -1)
         k_frac = torch.pow(1 - lambda_, -1) - 1
         k = torch.floor(k_frac).int()
         return k
 
-    def multipliers(self, k_beta, lambda_max):
+    def multipliers(self, k_betas, lambda_max):
+        k_betas_lst = k_betas.squeeze().tolist()
+        lambda_max_lst = lambda_max.squeeze().tolist()
+        multipliers_lst = [[self.k_multiplier_ixt(k, lambda_max).squeeze().item() for k in range(1, k_beta + 1)]
+                           + [0., ] * (self.dim - k_beta) for k_beta, lambda_max in zip(k_betas_lst, lambda_max_lst)]
+        multipliers = torch.tensor(multipliers_lst, device='cuda')
+        return multipliers
 
-
-
-        [self.k_multiplier_ixt(k, lambda_max) for k in range(1, k_beta + 1)]
-        + [0., ] * (self.dim - k_beta)
+    def k_multiplier_ixt(self, k, lambda_max):
+        lambda_k = torch.tensor(1 - 1 / (k + 1)).to('cuda')
+        log_term = torch.log((lambda_max * (1 - lambda_k)) / (lambda_k * (1 - lambda_max)))
+        return log_term
 
 
 class Trainer(Calculator):
@@ -101,7 +102,7 @@ class Trainer(Calculator):
         self.alpha = 1.92
         self.c = np.exp(-.866)
         self.optim = None
-        self.lr = .005
+        self.lr = .0001
         Calculator.__init__(self, self.lambdas, self.gammas, self.ixy, self.hx, self.alpha, self.c, self.dim)
 
     def plotter(self):
@@ -149,7 +150,7 @@ class Trainer(Calculator):
         return diff
 
     def note_me(self, i, loss):
-        if i % 1 == 0:
+        if i % 3 == 0:
             # TODO change me
             print(f'loss: {loss}')
 
